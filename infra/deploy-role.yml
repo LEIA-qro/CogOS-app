@@ -1,0 +1,71 @@
+# Rol de AWS que usa GitHub para desplegar
+AWSTemplateFormatVersion: "2010-09-09"
+Description: CogOS GitHub Actions deploy role (OIDC, no static keys)
+
+Parameters:
+  Project:
+    Type: String
+    Default: cogos
+  GitHubRepo:
+    Type: String
+    Default: LEIA-qro/CogOS-app
+  SubjectPrefix:
+    Type: String
+    Default: ""
+
+Conditions:
+  HasSubjectPrefix: !Not [!Equals [!Ref SubjectPrefix, ""]]
+
+Resources:
+  DeployRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${Project}-github-deploy"
+      MaxSessionDuration: 3600
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: !Sub "arn:aws:iam::${AWS::AccountId}:oidc-provider/token.actions.githubusercontent.com"
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                token.actions.githubusercontent.com:aud: sts.amazonaws.com
+              StringLike:
+                token.actions.githubusercontent.com:sub:
+                  - !Sub "repo:${GitHubRepo}:environment:*"
+                  - !If
+                    - HasSubjectPrefix
+                    - !Sub "${SubjectPrefix}:environment:*"
+                    - !Ref AWS::NoValue
+      Policies:
+        - PolicyName: web
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: s3:ListBucket
+                Resource: !Sub
+                  - "arn:aws:s3:::${Bucket}"
+                  - Bucket: !ImportValue
+                      Fn::Sub: "${Project}-web-bucket"
+              - Effect: Allow
+                Action: [s3:GetObject, s3:PutObject, s3:DeleteObject]
+                Resource: !Sub
+                  - "arn:aws:s3:::${Bucket}/*"
+                  - Bucket: !ImportValue
+                      Fn::Sub: "${Project}-web-bucket"
+              - Effect: Allow
+                Action: [cloudfront:CreateInvalidation, cloudfront:GetInvalidation]
+                Resource: !Sub
+                  - "arn:aws:cloudfront::${AWS::AccountId}:distribution/${Dist}"
+                  - Dist: !ImportValue
+                      Fn::Sub: "${Project}-web-distribution"
+      Tags:
+        - Key: project
+          Value: !Ref Project
+
+Outputs:
+  RoleArn:
+    Value: !GetAtt DeployRole.Arn

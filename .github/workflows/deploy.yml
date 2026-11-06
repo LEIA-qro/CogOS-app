@@ -1,0 +1,36 @@
+name: Deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: What to deploy
+        type: choice
+        options: [web]
+        default: web
+
+# Un deploy a la vez, el siguiente espera
+concurrency:
+  group: deploy-${{ inputs.target }}
+  cancel-in-progress: false
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  web:
+    if: inputs.target == 'web'
+    uses: ./.github/workflows/static-site.yml
+    with:
+      environment: web
+      dir: ${{ vars.WEB_DIR || 'web' }}
+      build-command: ${{ vars.WEB_BUILD_CMD || 'npm run build' }}
+      out-dir: ${{ vars.WEB_OUT_DIR || 'dist' }}
+      node-version: ${{ vars.NODE_VERSION || '20' }}
+      api-url: ${{ vars.API_URL || '' }}
+      bucket: ${{ vars.WEB_BUCKET }}
+      distribution-id: ${{ vars.WEB_DISTRIBUTION_ID }}
+      url: ${{ vars.WEB_URL }}
+      role-arn: ${{ vars.AWS_ROLE_ARN }}
+      region: ${{ vars.AWS_REGION }}

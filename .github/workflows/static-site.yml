@@ -1,0 +1,122 @@
+name: Static site
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        type: string
+        required: true
+      dir:
+        type: string
+        required: true
+      build-command:
+        type: string
+        default: npm run build
+      out-dir:
+        type: string
+        default: dist
+      node-version:
+        type: string
+        default: "20"
+      api-url:
+        type: string
+        default: ""
+      bucket:
+        type: string
+        required: true
+      distribution-id:
+        type: string
+        required: true
+      url:
+        type: string
+        required: true
+      role-arn:
+        type: string
+        required: true
+      region:
+        type: string
+        required: true
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment:
+      name: ${{ inputs.environment }}
+      url: ${{ inputs.url }}
+    steps:
+      - name: Mask infrastructure ids
+        env:
+          BUCKET: ${{ inputs.bucket }}
+          ROLE_ARN: ${{ inputs.role-arn }}
+          DISTRIBUTION_ID: ${{ inputs.distribution-id }}
+        run: |
+          # Oculta ids de AWS en los logs
+          echo "::add-mask::$BUCKET"
+          echo "::add-mask::$ROLE_ARN"
+          echo "::add-mask::$DISTRIBUTION_ID"
+          echo "::add-mask::$(cut -d: -f5 <<< "$ROLE_ARN")"
+
+      - uses: actions/checkout@v4
+
+      - name: Detect project
+        id: detect
+        env:
+          DIR: ${{ inputs.dir }}
+          OUT_DIR: ${{ inputs.out-dir }}
+        run: |
+          test -d "$DIR" || { echo "::error::Folder '$DIR' not found"; exit 1; }
+          if [ -f "$DIR/package.json" ]; then
+            echo "kind=node" >> "$GITHUB_OUTPUT"
+            echo "out=$DIR/$OUT_DIR" >> "$GITHUB_OUTPUT"
+          else
+            echo "kind=static" >> "$GITHUB_OUTPUT"
+            echo "out=$DIR" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/setup-node@v4
+        if: steps.detect.outputs.kind == 'node'
+        with:
+          node-version: ${{ inputs.node-version }}
+
+      - name: Build
+        if: steps.detect.outputs.kind == 'node'
+        working-directory: ${{ inputs.dir }}
+        env:
+          BUILD_COMMAND: ${{ inputs.build-command }}
+          VITE_API_URL: ${{ inputs.api-url }}
+          NEXT_PUBLIC_API_URL: ${{ inputs.api-url }}
+        run: |
+          if [ -f package-lock.json ]; then npm ci; else npm install; fi
+          eval "$BUILD_COMMAND"
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ inputs.role-arn }}
+          aws-region: ${{ inputs.region }}
+          mask-aws-account-id: true
+
+      - name: Upload
+        env:
+          OUT: ${{ steps.detect.outputs.out }}
+          BUCKET: ${{ inputs.bucket }}
+        run: |
+          test -f "$OUT/index.html" || { echo "::error::No index.html in '$OUT'"; exit 1; }
+          # Assets con caché larga, HTML sin caché
+          aws s3 sync "$OUT" "s3://$BUCKET" --delete --only-show-errors --exclude "*.html" --cache-control "public,max-age=31536000,immutable"
+          aws s3 sync "$OUT" "s3://$BUCKET" --delete --only-show-errors --exclude "*" --include "*.html" --cache-control "no-cache"
+          echo "Uploaded $(find "$OUT" -type f | wc -l | tr -d ' ') files"
+
+      - name: Invalidate cache
+        env:
+          DISTRIBUTION_ID: ${{ inputs.distribution-id }}
+        run: aws cloudfront create-invalidation --distribution-id "$DISTRIBUTION_ID" --paths "/*" --output text >/dev/null
+
+      - name: Summary
+        env:
+          URL: ${{ inputs.url }}
+        run: echo "Deployed \`${GITHUB_SHA::7}\` from \`${GITHUB_REF_NAME}\` to $URL" >> "$GITHUB_STEP_SUMMARY"

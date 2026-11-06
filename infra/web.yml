@@ -1,0 +1,101 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: CogOS web hosting (S3 + CloudFront)
+
+Parameters:
+  Project:
+    Type: String
+    Default: cogos
+
+Resources:
+  WebBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "${Project}-web-${AWS::AccountId}"
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      Tags:
+        - Key: project
+          Value: !Ref Project
+
+  # Bucket privado, solo CloudFront
+  OriginAccessControl:
+    Type: AWS::CloudFront::OriginAccessControl
+    Properties:
+      OriginAccessControlConfig:
+        Name: !Sub "${Project}-web-oac"
+        OriginAccessControlOriginType: s3
+        SigningBehavior: always
+        SigningProtocol: sigv4
+
+  Distribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        Comment: !Sub "${Project} web"
+        DefaultRootObject: index.html
+        HttpVersion: http2and3
+        PriceClass: PriceClass_100
+        Origins:
+          - Id: web
+            DomainName: !GetAtt WebBucket.RegionalDomainName
+            OriginAccessControlId: !GetAtt OriginAccessControl.Id
+            S3OriginConfig:
+              OriginAccessIdentity: ""
+        DefaultCacheBehavior:
+          TargetOriginId: web
+          ViewerProtocolPolicy: redirect-to-https
+          Compress: true
+          AllowedMethods: [GET, HEAD, OPTIONS]
+          CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6
+        # 403 y 404 sirven index.html para la SPA
+        CustomErrorResponses:
+          - ErrorCode: 403
+            ResponseCode: 200
+            ResponsePagePath: /index.html
+            ErrorCachingMinTTL: 0
+          - ErrorCode: 404
+            ResponseCode: 200
+            ResponsePagePath: /index.html
+            ErrorCachingMinTTL: 0
+      Tags:
+        - Key: project
+          Value: !Ref Project
+
+  WebBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref WebBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: cloudfront.amazonaws.com
+            Action: s3:GetObject
+            Resource: !Sub "${WebBucket.Arn}/*"
+            Condition:
+              StringEquals:
+                AWS:SourceArn: !Sub "arn:aws:cloudfront::${AWS::AccountId}:distribution/${Distribution}"
+
+Outputs:
+  BucketName:
+    Value: !Ref WebBucket
+    Export:
+      Name: !Sub "${Project}-web-bucket"
+  DistributionId:
+    Value: !Ref Distribution
+    Export:
+      Name: !Sub "${Project}-web-distribution"
+  Url:
+    Value: !Sub "https://${Distribution.DomainName}"
