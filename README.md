@@ -2,7 +2,7 @@
 
 CogOS is a web desktop built to help neurodivergent employees get through their first 90 days at a new job and stay there. We built it for the North American AI Challenge for Neurodiverse Learning (ASU Spark Center, Mostla, and Kairós Inclusión).
 
-https://github.com/user-attachments/assets/c6a7591a-dd9f-42b9-9a66-63dc92fbd38e
+https://github.com/user-attachments/assets/2200499d-7387-470e-8421-375ff7ac484c
 
 **Live:** https://d2u8pzftovww2k.cloudfront.net
 
